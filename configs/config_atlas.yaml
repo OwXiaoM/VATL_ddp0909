@@ -74,7 +74,7 @@ inr_decoder:
   cnn_kernel_size: 3 # kernel size for the CNN for spatial modulation, if 0 no CNN is used
   latent_dim: [256, 3, 3, 3] # latent code dimension, [latent_dim, X, Y, Z]
   in_dim: 3 # input dimension of the coordinates, e.g. 3 for 3D images
-  out_dim: [1, 11] #(number of modalities (not counting segmentation), number of segmentation channels)
+  out_dim: [1, 8] #(number of modalities (not counting segmentation), number of segmentation channels)
   hidden_size: 1024 # hidden size of the MLP
   num_hidden_layers: 5 # number of hidden layers of the MLP
   modulated_layers: [1, 3, 5] # layers that are modulated by the latent code
@@ -123,6 +123,6 @@ epochs: # number of epochs for training/validation
   train: 1000
   val: 1 # the num epochs for latent code optimization, redone for each validation cycle)
 validate_every: 1
-batch_size: 4 # batch size for training/validation (number of subjects per batch)
+batch_size: 16 # batch size for training/validation (number of subjects per batch)
 n_samples: 50000 # number of coordinates in each "inner_batch" sampled across the subejct batch
 num_workers: 8 # number of workers for dataloader

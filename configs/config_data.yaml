@@ -177,6 +177,6 @@ feta_atlas: # dhcp neonates multimodal dataset config
       values: ['M', 'F']
 
   label_names: ['ClearLabel', 'CSF', 'GM', 'WM', 'Ventricles', 'Cerebellum', 'Deep_GM', 'Brainstem']
-  class_weights: [0.00, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-  world_bbox: [155, 155, 155] # size of the (roughly) smallest COMMON bounding box for all subjects in mm
+  class_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+  world_bbox: [120, 120, 120] # size of the (roughly) smallest COMMON bounding box for all subjects in mm
   normalize_values: 'minmax' # 'minmax' or 'zscore'

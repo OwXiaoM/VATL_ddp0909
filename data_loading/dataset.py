@@ -81,49 +81,97 @@ class Data(Dataset):
         return modalities
 
     def load_coords_and_values(self, modalities, normalize=True):
-            modalities_data = self.augment_modalities(modalities)
-            mra_data = modalities_data[self.modality_keys[0]]
-            seg_data = modalities_data[self.modality_keys[-1]]
-            affine = modalities[self.modality_keys[-1]].affine
+        modalities_data = self.augment_modalities(modalities)
+        # 假设 modality_keys[0] 是灰度图(MRA/T2w)，[-1] 是 Segmentation
+        mra_data = modalities_data[self.modality_keys[0]]
+        seg_data = modalities_data[self.modality_keys[-1]]
+        affine = modalities[self.modality_keys[-1]].affine
 
-            # 1. 采样点 (保持你原来的逻辑，这部分没问题)
-            vessel_indices = np.argwhere(seg_data > 0)
-            
-            # 增加背景采样比例，从 1:2 改为 1:4 或更高，防止背景产生伪影
-            n_vessel = len(vessel_indices)
-            target_n_bg = int(n_vessel * 4) 
-            target_n_bg = max(target_n_bg, 20000) 
-            
-            bg_indices_all = np.argwhere((mra_data > 1e-3) & (seg_data == 0))
-            if len(bg_indices_all) > target_n_bg:
-                perm = np.random.permutation(len(bg_indices_all))
-                selected_bg_indices = bg_indices_all[perm[:target_n_bg]]
-            else:
-                selected_bg_indices = bg_indices_all
+        # --------------------------------------------------------------
+        # 1. 通用前景采样 (Generic Foreground Sampling)
+        # --------------------------------------------------------------
+        # 逻辑：只要 Label > 0，就是前景 (不管是血管还是脑组织)
+        # 这适配 config 中定义的任意数量的 Label
+        vessel_indices = np.argwhere(seg_data > 0)
+        
+        # --------------------------------------------------------------
+        # 2. 通用背景采样 (Generic Background Sampling)
+        # --------------------------------------------------------------
+        # 逻辑：Label == 0 是背景。
+        # 改进：采用“分层采样”策略，同时覆盖“空气”和“未标记组织”
+        n_vessel = len(vessel_indices)
+        target_n_bg = int(n_vessel * 4) 
+        target_n_bg = max(target_n_bg, 20000) 
 
-            c_nz = np.vstack((vessel_indices, selected_bg_indices))
-            values = np.stack([modalities_data[mod][c_nz[:, 0], c_nz[:, 1], c_nz[:, 2]].flatten() 
-                                for mod in self.modality_keys], axis=-1)
+        # 计算一个简单的亮度阈值，区分背景中的“空气”和“实体”
+        # 取前景区域的中位数作为参考，取其 10%-20% 作为空气阈值
+        if len(vessel_indices) > 0:
+            # 这种写法比 percentile 快，且足够鲁棒
+            fg_mean = np.mean(mra_data[seg_data > 0])
+            air_threshold = fg_mean * 0.1 
+        else:
+            air_threshold = 0.01 # Fallback
+
+        # [Pool A] 亮背景 (Likely Tissue): Label=0 但有信号 (针对 IXI 的脑组织)
+        bg_tissue_mask = (seg_data == 0) & (mra_data > air_threshold)
+        bg_tissue_indices = np.argwhere(bg_tissue_mask)
+
+        # [Pool B] 暗背景 (Likely Air): Label=0 且无信号 (针对 FeTA 的去雾)
+        bg_air_mask = (seg_data == 0) & (mra_data <= air_threshold)
+        bg_air_indices = np.argwhere(bg_air_mask)
+
+        # 执行混合采样
+        selected_bg_indices = []
+        
+        # 如果两种背景都存在 (比如 IXI)，各采一半
+        if len(bg_tissue_indices) > 0 and len(bg_air_indices) > 0:
+            n_tissue = target_n_bg // 2
+            n_air = target_n_bg - n_tissue
             
-            # 2. [核心修复] 使用图像的几何中心，而不是血管质心
-            c_nz_phys = nib.affines.apply_affine(affine, c_nz)
+            # 采 Tissue
+            idx_tissue = np.random.choice(len(bg_tissue_indices), min(len(bg_tissue_indices), n_tissue), replace=False)
+            selected_bg_indices.append(bg_tissue_indices[idx_tissue])
             
-            # 计算图像物理空间的中心 (FOV center)
-            img_shape = np.array(mra_data.shape)
-            img_center_index = img_shape / 2.0
-            geometric_center = nib.affines.apply_affine(affine, img_center_index)
+            # 采 Air
+            idx_air = np.random.choice(len(bg_air_indices), min(len(bg_air_indices), n_air), replace=False)
+            selected_bg_indices.append(bg_air_indices[idx_air])
             
-            # 使用几何中心对齐
-            coords = c_nz_phys - geometric_center
+        # 如果只有一种背景 (比如 FeTA，Tissue 都在前景里了，背景全是 Air)，那就全采它
+        elif len(bg_tissue_indices) > 0:
+            idx = np.random.choice(len(bg_tissue_indices), min(len(bg_tissue_indices), target_n_bg), replace=False)
+            selected_bg_indices.append(bg_tissue_indices[idx])
+        elif len(bg_air_indices) > 0:
+            idx = np.random.choice(len(bg_air_indices), min(len(bg_air_indices), target_n_bg), replace=False)
+            selected_bg_indices.append(bg_air_indices[idx])
             
-            if normalize:
-                # 确保 world_bbox 足够大能覆盖你的图像
-                wb_center = self.world_bbox / 2
-                coords = (coords / wb_center) 
-                # 如果报错说明 world_bbox 设小了，建议在 config 里加大 world_bbox
-                # assert_correct_coord_normalization(coords) 
-                values = normalize_intensities(values, self.args['dataset']['normalize_values'])
-            return coords, values
+        if len(selected_bg_indices) > 0:
+            selected_bg_indices = np.vstack(selected_bg_indices)
+        else:
+            # 极个别情况下的保底 (全图都是前景?)
+            selected_bg_indices = np.argwhere(seg_data == 0) # Fallback
+
+        # --------------------------------------------------------------
+        # 3. 合并与坐标计算 (保持原有逻辑)
+        # --------------------------------------------------------------
+        c_nz = np.vstack((vessel_indices, selected_bg_indices))
+        values = np.stack([modalities_data[mod][c_nz[:, 0], c_nz[:, 1], c_nz[:, 2]].flatten() 
+                            for mod in self.modality_keys], axis=-1)
+        
+        # 使用图像的几何中心，而不是血管质心
+        c_nz_phys = nib.affines.apply_affine(affine, c_nz)
+        
+        img_shape = np.array(mra_data.shape)
+        img_center_index = img_shape / 2.0
+        geometric_center = nib.affines.apply_affine(affine, img_center_index)
+        
+        coords = c_nz_phys - geometric_center
+        
+        if normalize:
+            wb_center = self.world_bbox / 2
+            coords = (coords / wb_center) 
+            values = normalize_intensities(values, self.args['dataset']['normalize_values'])
+            
+        return coords, values
 
 
     def augment_modalities(self, modalities):
