@@ -21,7 +21,8 @@ compute_metrics: True # if True, compute the metrics for subject adaptation (req
 save_imgs: # if True, save the reconstruction images for the training/validation set
   train: True 
   val: True
-save_model: False # if True, save the model to output_dir
+  test: True
+save_model: True # if True, save the model to output_dir
 load_model: 
   path: ""  
   epoch: 1 # which epoch to load
@@ -118,7 +119,7 @@ n_subjects: # number of subjects to use for training/validation
 epochs: # number of epochs for training/validation
   train: 1000
   val: 5 # the num epochs for latent code optimization, redone for each validation cycle)
-validate_every: 5
-batch_size: 4 # batch size for training/validation (number of subjects per batch)
-n_samples: 200000 # number of coordinates in each "inner_batch" sampled across the subejct batch
-num_workers: 8 # number of workers for dataloader
+validate_every: 10
+batch_size: 16 # batch size for training/validation (number of subjects per batch)
+n_samples: 100000 # number of coordinates in each "inner_batch" sampled across the subejct batch
+num_workers: 16 # number of workers for dataloader

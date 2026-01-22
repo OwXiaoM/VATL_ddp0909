@@ -112,33 +112,38 @@ class AtlasBuilder:
     
     def validate(self, epoch_train):
         """
-        Validate the model on the validation set, including:
-        - optionally generate atlas and save to disk
-        - generate training subjects and compute eval metrics, optionally save to disk
-        - generate validation subjects and compute eval metrics, optionally save to disk
-        - analyze latent space to predict attributes like sex, scan age, birth age
-        - save model state
+        Validate the model on the validation set.
         """
-        if self.args['generate_cond_atlas']: self.generate_atlas(epoch_train, n_max=100)
+        # 1. 生成 Atlas (保持不变)
+        if self.args['generate_cond_atlas']: 
+            self.generate_atlas(epoch_train, n_max=100)
 
         # --------- Start Actual Validation ---------
-        if (epoch_train+1) % self.args['validate_every'] == 0 or (epoch_train+1) == self.args['epochs']['train']:
-            # Evaluate reconstruction quality on training subjects specified by idcs_df
-            
-            num_train = len(self.datasets['train'])
-            train_indices = [0, 2, 3] if num_train > 3 else list(range(num_train)) 
-            metrics_train = self.generate_subjects_from_df(idcs_df=train_indices, epoch=epoch_train, split='train')
-            log_metrics(self.args, metrics_train, epoch_train, df=self.datasets['train'].df, split='train')
+        # [修改] 注释掉下面这行多余的判断 (或者改为 if True:)
+        # if (epoch_train+1) % self.args['validate_every'] == 0 or ... :
+        
+        # 直接开始执行 inference
+        print(f"Starting inference for Epoch {epoch_train}...") # 加个打印确认
+        
+        # Evaluate reconstruction quality on training subjects
+        # 注意：这里可以保留对 train set 的采样逻辑
+        num_train = len(self.datasets['train'])
+        train_indices = [0, 2, 3] if num_train > 3 else list(range(num_train))
+        metrics_train = self.generate_subjects_from_df(idcs_df=train_indices, epoch=epoch_train, split='train')
+        log_metrics(self.args, metrics_train, epoch_train, df=self.datasets['train'].df, split='train')
 
-            # Evaluate reconstruction quality on validation subjects
-            self._init_validation() # reinitialize validation model to avoid information leakage
-            for epoch_val in range(self.args['epochs']['val']):
-                self.train_epoch(epoch=epoch_val, split='val') # fit latent codes and tfs to validation set
-                self._update_scheduler(split='val') #TODO: update more often than every epoch
-                self.analyze_latent_space(epoch_train, epoch_val=epoch_val)
-            metrics_val = self.generate_subjects_from_df(idcs_df=range(len(self.datasets['val'])), 
-                                                        epoch=epoch_val, split='val')
-            log_metrics(self.args, metrics_val, epoch_train, df=self.datasets['val'].df, split='val')
+        # Evaluate reconstruction quality on validation subjects
+        self._init_validation() 
+        
+        # Validation Optimization Loop (Test-time Optimization)
+        for epoch_val in range(self.args['epochs']['val']):
+            self.train_epoch(epoch=epoch_val, split='val') 
+            self._update_scheduler(split='val') 
+            self.analyze_latent_space(epoch_train, epoch_val=epoch_val)
+            
+        metrics_val = self.generate_subjects_from_df(idcs_df=range(len(self.datasets['val'])), 
+                                                    epoch=epoch_val, split='val')
+        log_metrics(self.args, metrics_val, epoch_train, df=self.datasets['val'].df, split='val')
         
         self.save_state(epoch_train)
 

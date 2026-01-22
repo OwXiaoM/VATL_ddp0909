@@ -300,7 +300,7 @@ def save_atlas(args, atlas, affine, temp_steps, condition_vectors, epoch):
         mod_labels = mod_labels + seg_labels
     for c in range(n_conds):
         for i in range(len(mod_labels)):
-            filename = (f'{mod_labels[i]}_ga={temp_steps[0]}-{temp_steps[-1]}_cond={c}_ep={epoch}.nii.gz')
+            filename = (f'{mod_labels[i]}={temp_steps[0]}-{temp_steps[-1]}_cond={c}_ep={epoch}.nii.gz')
             save_img(atlas[..., i, c, :], affine=affine, output_path=args['output_dir'], filename=filename)
     print('Atlas saved to {}'.format(args['output_dir']))
 
