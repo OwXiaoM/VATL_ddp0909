@@ -103,116 +103,118 @@ class Data(Dataset):
         return modalities
 
     def load_coords_and_values(self, modalities, normalize=True):
-            # 1. 数据增强与加载
-            modalities_data = self.augment_modalities(modalities)
-            mra_data = modalities_data[self.modality_keys[0]]
-            seg_data = modalities_data[self.modality_keys[-1]]
-            affine = modalities[self.modality_keys[-1]].affine
-            img_shape = mra_data.shape
+        # 1. 数据增强与加载 (保持不变)
+        modalities_data = self.augment_modalities(modalities)
+        mra_data = modalities_data[self.modality_keys[0]]
+        seg_data = modalities_data[self.modality_keys[-1]]
+        affine = modalities[self.modality_keys[-1]].affine
+        img_shape = mra_data.shape
 
-            # --------------------------------------------------------------
-            # 2. 前景采样 (Vessel) - 保持 argwhere
-            # --------------------------------------------------------------
-            vessel_indices = np.argwhere(seg_data > 0)
-            n_vessel = len(vessel_indices)
+        # --------------------------------------------------------------
+        # 2. 前景采样 (Vessel) - 保持全采
+        # --------------------------------------------------------------
+        vessel_indices = np.argwhere(seg_data > 0)
+        n_vessel = len(vessel_indices)
+        
+        # [修改点 1] 设定一个固定的、巨大的背景目标
+        # 不管血管有多少，我们都强制要求采够 500万个背景点
+        # 这样能保证每个 Batch 的数据量足够让 GPU 训练很久
+        target_n_bg = 5000000 
+
+        # --------------------------------------------------------------
+        # 3. 背景采样 (极速拒绝采样)
+        # --------------------------------------------------------------
+        if n_vessel > 0:
+            fg_mean = np.mean(mra_data[seg_data > 0])
+            air_threshold = fg_mean * 0.1 
+        else:
+            air_threshold = 0.01
+
+        selected_bg_indices = []
+        
+
+        n_candidates = target_n_bg * 2
+        rand_coords = np.random.randint(0, [img_shape[0], img_shape[1], img_shape[2]], size=(n_candidates, 3))
+        
+        # 批量获取像素值 (Numpy 高级索引)
+        vals_mra = mra_data[rand_coords[:,0], rand_coords[:,1], rand_coords[:,2]]
+        vals_seg = seg_data[rand_coords[:,0], rand_coords[:,1], rand_coords[:,2]]
+        
+        # [关键] 这里保证了不是“乱采”
+        # 我们依然严格区分 Tissue 和 Air
+        is_bg = (vals_seg == 0)
+        mask_tissue = is_bg & (vals_mra > air_threshold)
+        mask_air = is_bg & (vals_mra <= air_threshold)
+        
+        pool_tissue = rand_coords[mask_tissue]
+        pool_air = rand_coords[mask_air]
+
+        # 执行分层配额 (Tissue/Air 各一半)
+        if len(pool_tissue) > 0 and len(pool_air) > 0:
+            n_tissue_target = target_n_bg // 2
+            n_air_target = target_n_bg - n_tissue_target
             
-            # 设定背景采样总目标
-            target_n_bg = int(n_vessel * 4) 
-            target_n_bg = max(target_n_bg, 20000) 
-
-            # --------------------------------------------------------------
-            # 3. 背景采样 (极速拒绝采样)
-            # --------------------------------------------------------------
-            if n_vessel > 0:
-                fg_mean = np.mean(mra_data[seg_data > 0])
-                air_threshold = fg_mean * 0.1 
+            # 够就截断，不够就全拿
+            if len(pool_tissue) >= n_tissue_target:
+                selected_bg_indices.append(pool_tissue[:n_tissue_target])
             else:
-                air_threshold = 0.01
-
-            selected_bg_indices = []
-            
-            # 估算需要的随机点数量 (4倍冗余)
-            n_candidates = target_n_bg * 4
-            rand_coords = np.random.randint(0, [img_shape[0], img_shape[1], img_shape[2]], size=(n_candidates, 3))
-            
-            # 批量获取像素值
-            vals_mra = mra_data[rand_coords[:,0], rand_coords[:,1], rand_coords[:,2]]
-            vals_seg = seg_data[rand_coords[:,0], rand_coords[:,1], rand_coords[:,2]]
-            
-            # 分类筛选
-            is_bg = (vals_seg == 0)
-            mask_tissue = is_bg & (vals_mra > air_threshold)
-            mask_air = is_bg & (vals_mra <= air_threshold)
-            
-            pool_tissue = rand_coords[mask_tissue]
-            pool_air = rand_coords[mask_air]
-
-            # 执行分层配额
-            if len(pool_tissue) > 0 and len(pool_air) > 0:
-                n_tissue_target = target_n_bg // 2
-                n_air_target = target_n_bg - n_tissue_target
+                selected_bg_indices.append(pool_tissue)
                 
-                if len(pool_tissue) >= n_tissue_target:
-                    selected_bg_indices.append(pool_tissue[:n_tissue_target])
-                else:
-                    selected_bg_indices.append(pool_tissue)
-                    
-                if len(pool_air) >= n_air_target:
-                    selected_bg_indices.append(pool_air[:n_air_target])
-                else:
-                    selected_bg_indices.append(pool_air)
-                    
-            elif len(pool_tissue) > 0:
-                selected_bg_indices.append(pool_tissue[:target_n_bg])
-            elif len(pool_air) > 0:
-                selected_bg_indices.append(pool_air[:target_n_bg])
-                
-            # 保底逻辑
-            if len(selected_bg_indices) == 0:
-                fallback = np.argwhere(seg_data == 0)
-                if len(fallback) > 0:
-                    indices = np.random.choice(len(fallback), min(len(fallback), target_n_bg))
-                    selected_bg_indices.append(fallback[indices])
+            if len(pool_air) >= n_air_target:
+                selected_bg_indices.append(pool_air[:n_air_target])
             else:
-                selected_bg_indices = np.vstack(selected_bg_indices)
-
-            # --------------------------------------------------------------
-            # 4. [修复这里] 先合并前景和背景，定义 c_nz
-            # --------------------------------------------------------------
-            if len(selected_bg_indices) > 0:
-                c_nz = np.vstack((vessel_indices, selected_bg_indices))
-            else:
-                c_nz = vessel_indices
-
-            # --------------------------------------------------------------
-            # 5. 强制截断 (Hard Clamping) - 防止 CPU 爆炸
-            # --------------------------------------------------------------
-            max_points_per_subject = 4000000 
-            
-            if len(c_nz) > max_points_per_subject:
-                # 随机打乱并截取前 N 个
-                perm = np.random.permutation(len(c_nz))
-                c_nz = c_nz[perm[:max_points_per_subject]]
-
-            # --------------------------------------------------------------
-            # 6. 提取值与坐标计算
-            # --------------------------------------------------------------
-            values = np.stack([modalities_data[mod][c_nz[:, 0], c_nz[:, 1], c_nz[:, 2]].flatten() 
-                                for mod in self.modality_keys], axis=-1)
-            
-            # 几何中心对齐
-            c_nz_phys = nib.affines.apply_affine(affine, c_nz)
-            img_center_index = np.array(img_shape) / 2.0
-            geometric_center = nib.affines.apply_affine(affine, img_center_index)
-            
-            coords = c_nz_phys - geometric_center
-            
-            if normalize:
-                wb_center = self.world_bbox / 2
-                coords = (coords / wb_center) 
-                values = normalize_intensities(values, self.args['dataset']['normalize_values'])
+                selected_bg_indices.append(pool_air)
                 
-            return coords, values
+        elif len(pool_tissue) > 0:
+            selected_bg_indices.append(pool_tissue[:target_n_bg])
+        elif len(pool_air) > 0:
+            selected_bg_indices.append(pool_air[:target_n_bg])
+            
+        # 保底逻辑 (万一随机撒点没撒够，回退到慢速方法补齐，极少发生)
+        if len(selected_bg_indices) == 0:
+            fallback = np.argwhere(seg_data == 0)
+            if len(fallback) > 0:
+                indices = np.random.choice(len(fallback), min(len(fallback), target_n_bg))
+                selected_bg_indices.append(fallback[indices])
+        else:
+            selected_bg_indices = np.vstack(selected_bg_indices)
+
+        # --------------------------------------------------------------
+        # 4. 合并前景和背景
+        # --------------------------------------------------------------
+        if len(selected_bg_indices) > 0:
+            c_nz = np.vstack((vessel_indices, selected_bg_indices))
+        else:
+            c_nz = vessel_indices
+
+        # --------------------------------------------------------------
+        # 5. [修改点 2] 提升截断上限
+        # --------------------------------------------------------------
+        # 既然我们辛苦采了 500万背景，就允许它们都通过
+        max_points_per_subject = 5000000 
+        
+        if len(c_nz) > max_points_per_subject:
+            perm = np.random.permutation(len(c_nz))
+            c_nz = c_nz[perm[:max_points_per_subject]]
+
+        # --------------------------------------------------------------
+        # 6. 提取值与坐标计算 (保持不变)
+        # --------------------------------------------------------------
+        values = np.stack([modalities_data[mod][c_nz[:, 0], c_nz[:, 1], c_nz[:, 2]].flatten() 
+                            for mod in self.modality_keys], axis=-1)
+        
+        c_nz_phys = nib.affines.apply_affine(affine, c_nz)
+        img_center_index = np.array(img_shape) / 2.0
+        geometric_center = nib.affines.apply_affine(affine, img_center_index)
+        
+        coords = c_nz_phys - geometric_center
+        
+        if normalize:
+            wb_center = self.world_bbox / 2
+            coords = (coords / wb_center) 
+            values = normalize_intensities(values, self.args['dataset']['normalize_values'])
+            
+        return coords, values
 
 
     def augment_modalities(self, modalities):
