@@ -416,7 +416,7 @@ def squeeze_modalities(modality, path, write2disk=False):
         return modality
 
 # add background halo to segmentation to allow masking of the brain in the postprsocessing step
-def add_background_halo(label_names, seg_nii, halo_width=1.5, background_label_str='BG'):
+def add_background_halo(label_names, seg_nii, halo_width=1.5, background_label_str='Background'):
     seg = seg_nii.get_fdata()
     bg_label = label_names.index(background_label_str)
     mask_bg = (seg>0).astype(np.float32)
@@ -543,8 +543,8 @@ def compute_metrics(args, pred, affine, df_row_dict, epoch, split, reg_type='Rig
     modalities = args['dataset']['modalities']
     sub_id = df_row_dict['subject_id']
 
-    if bg_label is None and 'BG' in args['dataset']['label_names']:
-        bg_label = args['dataset']['label_names'].index('BG')
+    if bg_label is None and 'Background' in args['dataset']['label_names']:
+        bg_label = args['dataset']['label_names'].index('Background')
     else:
         bg_label = 0 # default background label
 

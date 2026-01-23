@@ -75,7 +75,7 @@ inr_decoder:
   cnn_kernel_size: 3 # kernel size for the CNN for spatial modulation, if 0 no CNN is used
   latent_dim: [256, 3, 3, 3] # latent code dimension, [latent_dim, X, Y, Z]
   in_dim: 3 # input dimension of the coordinates, e.g. 3 for 3D images
-  out_dim: [1, 11] #(number of modalities (not counting segmentation), number of segmentation channels)
+  out_dim: [1, 2] #(number of modalities (not counting segmentation), number of segmentation channels)
   hidden_size: 1024 # hidden size of the MLP
   num_hidden_layers: 5 # number of hidden layers of the MLP
   modulated_layers: [1, 3, 5] # layers that are modulated by the latent code
@@ -103,7 +103,7 @@ atlas_gen:
 # --------- Latent Space Analysis ---------
 latent_anaylsis: # to predict scan_age from latentcode or explciit conditions during test-time
   activate: False
-  predict_scan_age: 'NCA' #NCA, none for no prediction
+  predict_scan_age: NCA #NCA, none for no prediction
   predict_birth_age: 'none' #NCA, none for no prediction, used for implicit birth-age prediction from latent code for ablation study.
   predict_ext_condition: 'none' #'MAE'  # predict a condition for test-time subjects, MAE for birth-age, binary crossentropy for sex, none for no prediction
   ba_regression:
@@ -120,6 +120,6 @@ epochs: # number of epochs for training/validation
   train: 1000
   val: 5 # the num epochs for latent code optimization, redone for each validation cycle)
 validate_every: 10
-batch_size: 16 # batch size for training/validation (number of subjects per batch)
+batch_size: 8 # batch size for training/validation (number of subjects per batch)
 n_samples: 100000 # number of coordinates in each "inner_batch" sampled across the subejct batch
-num_workers: 16 # number of workers for dataloader
+num_workers: 10 # number of workers for dataloader

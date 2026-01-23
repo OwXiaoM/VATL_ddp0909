@@ -39,40 +39,37 @@ class INR_Decoder(nn.Module):
         """
         Inference of the INR decoder for volume generation.
         """
+        # 1. 初始化输出容器
         output = torch.empty((coords.shape[0], self.out_dim)).to(device=self.device)
+        
+        # 2. 坐标变换
         coords = self.transform(coords, tfs.expand(coords.shape[0], -1)) if tfs is not None else coords
+        
+        # 3. 分块推理 (Chunking)
         for i in range(0, coords.shape[0], step_size):
             c = coords[i:i+step_size]
-            # lv = latent_vec.expand(c.shape[0], -1, -1, -1, -1)
-            idcs_df = torch.tensor([0]).expand(c.shape[0])
+            
+            # [关键修改] 确保索引在 GPU 上，避免 Device Mismatch 错误
+            idcs_df = torch.zeros(c.shape[0], dtype=torch.long, device=self.device)
+            
             cv = condition_vec.expand(c.shape[0], -1)
             output[i:i + step_size] = self.forward(c, latent_vec, cv, idcs_df=idcs_df)
-        # imgs = torch.clamp(output[..., :self.sr_dims], 0, 1)
-        # # normalize to [0, 1] for each SR modality
-        # imgs = (imgs - imgs.min(dim=0, keepdim=True)[0]) / (imgs.max(dim=0, keepdim=True)[0] - imgs.min(dim=0, keepdim=True)[0])
-        # imgs = imgs.reshape(img_shape+[-1])
+
         raw_imgs = output[..., :self.sr_dims]
         
-        # 2. 安全归一化 (Safe Min-Max Normalization)
-        v_min = raw_imgs.min(dim=0, keepdim=True)[0]
-        v_max = raw_imgs.max(dim=0, keepdim=True)[0]
-        denominator = v_max - v_min
+        # 4. 归一化逻辑修复
+        # 以前的 Min-Max 会导致背景噪声被拉伸成全白。
+        # 对于 MRA，背景应该是 0，所以直接截断 (Clamp) 到 [0, 1] 是最正确的做法。
+        imgs = torch.clamp(raw_imgs, 0, 1)
         
-        # 防止除以 0：如果 max == min (纯色图像)，分母设为 1
-        denominator[denominator < 1e-5] = 1.0 
-        
-        imgs = (raw_imgs - v_min) / denominator
-        
-        # 3. 此时数据已经在 [0, 1] 范围内了，再做一次 Clamp 确保数值稳定（可选，但在 float 精度误差下是个好习惯）
-        imgs = torch.clamp(imgs, 0, 1)
-        
-        imgs = imgs.reshape(img_shape+[-1])
+        # 5. Reshape
+        imgs = imgs.reshape(img_shape + [-1])
 
-        raw = output[..., :self.sr_dims]
-
-        seg_hard = torch.argmax(output[..., self.sr_dims:], dim=-1).reshape(img_shape+[-1])
-        seg_soft = torch.nn.functional.softmax(output[..., self.sr_dims:], dim=-1).reshape(img_shape+[-1])
+        # 6. 处理分割结果
+        seg_hard = torch.argmax(output[..., self.sr_dims:], dim=-1).reshape(img_shape + [-1])
+        seg_soft = torch.nn.functional.softmax(output[..., self.sr_dims:], dim=-1).reshape(img_shape + [-1])
        
+        # 7. 合并通道
         modalities_rec = torch.cat((imgs, seg_hard, seg_soft), dim=-1)
 
         if self.args['mask_reconstruction']:
@@ -108,7 +105,7 @@ class INR_Decoder(nn.Module):
         mask = mask.expand_as(recs)
         return recs * mask
 
-    def connected_components(self, seg, bg_label_str='BG'):
+    def connected_components(self, seg, bg_label_str='Background'):
         bg_label = self.args['dataset']['label_names'].index(bg_label_str)
         mask = ((seg > 0) & (seg != bg_label)).detach().cpu().numpy()
         shp = np.array(list(mask.shape[:-1]))
