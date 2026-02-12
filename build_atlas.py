@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 from sklearn.neighbors import KNeighborsClassifier, NeighborhoodComponentsAnalysis
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import make_pipeline
-from torch.amp.grad_scaler import GradScaler
+from torch.cuda.amp import GradScaler
 from models.inr_decoder import INR_Decoder, LatentRegressor
 from data_loading.dataset import Data
 from utils import *
@@ -530,7 +530,9 @@ class AtlasBuilder:
         self.datasets[split] = Data(self.args, tsv_file, split=split, df_loaded=df_loaded)
         self.dataloaders[split] = DataLoader(self.datasets[split], batch_size=self.args['batch_size'], 
                                              num_workers=self.args['num_workers'], shuffle=shuffle, 
-                                             collate_fn=self.datasets[split].collate_fn, pin_memory=True)
+                                             collate_fn=self.datasets[split].collate_fn, pin_memory=True,
+                                             persistent_workers=True, prefetch_factor=2)
+                                             
 
         print(f"Initialized dataloader for {split} with {len(self.datasets[split])} subjects")
 

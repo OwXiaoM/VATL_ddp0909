@@ -130,8 +130,8 @@ marsfet_nnUNet:
 
 mra_atlas: # dhcp neonates multimodal dataset config
   dataset_name: mra_atlas
-  subject_ids: /home/zhangx/CINeMA/vessel_data/IXI/v4/subject_ids.yaml
-  tsv_file: /home/zhangx/CINeMA/vessel_data/IXI/v4/ixi_metadata.tsv
+  subject_ids: /leonardo_scratch/large/userexternal/xzhang01/Cinema/data/IXI/subject_ids.yaml
+  tsv_file: /leonardo_scratch/large/userexternal/xzhang01/Cinema/data/IXI/ixi_metadata.tsv
   modalities: ['MRA', 'Seg'] # modality names in the tsv file 
   conditions:  # conditions with number of dimensions possibly used for atlas conditioning
     scan_age: true   # 将年龄作为图谱生成的“时间轴”条件

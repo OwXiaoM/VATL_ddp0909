@@ -435,102 +435,6 @@ def mask_nifti(nii, mask):
     return nib.Nifti1Image(data, nii.affine)
 
 
-# def compute_metrics(args, pred, affine, df_row_dict, epoch, split, reg_type='Rigid', bg_label=None):
-#     """
-#     Compute metrics for a predicted subject. Assumes that all reference modalities are already aligned.
-#     Args:
-#         pred: predicted subject of shape (x,y,z, num_modalities)
-#         affine: affine matrix of the predicted subject
-#         df_row_dict: dictionary containing the ground truth subject information
-#         reg_type: registration type
-#         bg_label: background label, if not specified, it is assumed to be the label with with id 'BG'
-#     Returns:
-#         metrics: dictionary containing the computed metrics
-#     """
-#     pred, affine = typecheck_img_affine(pred, affine)
-#     metrics = {'Subject': df_row_dict['subject_id'], 'PSNR': [], 'SSIM': [], 'DICE': []}
-#     modalities = args['dataset']['modalities']
-#     sub_id = df_row_dict['subject_id']
-
-#     if bg_label is None and 'BG' in args['dataset']['label_names']:
-#         bg_label = args['dataset']['label_names'].index('BG')
-#     else:
-#         bg_label = 0 # default background label
-
-#     if 'Seg' in modalities[-1]:
-#         mask_ref_nii = nib.load(df_row_dict[modalities[-1]])
-#     else:
-#         mask_ref_nii = None
-#         print("No segmentation provided, no mask can be used. Metrics likely not correct." )
-    
-#     mytx = None
-#     for i, mod in enumerate(modalities):
-#         is_seg = (i == len(modalities)-1 and 'Seg' in mod)
-#         mod_ref_nii = nib.load(df_row_dict[mod])
-#         mod_pred_nii = nib.Nifti1Image(pred[..., i], affine)
-#         mod_pred_reg_nii, mod_ref_nii, mytx = reg_imgs(mod_pred_nii, mod_ref_nii, 
-#                                                        mask_ref_nii, mytx, reg_type, is_seg)
-#         if mytx is None:
-#              # 如果没有配准，我们假定它们已经对齐，或者直接跳过计算以防报错
-#              # 这里选择继续计算（比较原始图像），但要注意结果可能很差
-#              pass
-#         # crop imgs to avoid background from boosting the metrics
-#         bbox = get_bbox(mod_ref_nii)[0]
-#         x_min, y_min, z_min = bbox[0]
-#         x_max, y_max, z_max = bbox[1]+1
-#         mod_pred_reg_cropped = mod_pred_reg_nii.get_fdata()[x_min:x_max, y_min:y_max, z_min:z_max]
-#         mod_ref_cropped = mod_ref_nii.get_fdata()[x_min:x_max, y_min:y_max, z_min:z_max]
-#         if not is_seg:
-#             metrics['PSNR'].append(psnr_metric(mod_pred_reg_cropped, mod_ref_cropped))
-#             metrics['SSIM'].append(ssim_metric(mod_pred_reg_cropped, mod_ref_cropped, data_range=1))
-#         else:
-#             metrics['DICE'].append(compute_dice(mod_pred_reg_cropped, mod_ref_cropped, bg_label))
-        
-#         if args['save_imgs'][split]:
-#             fn_pred = f'{split}/{mod}_{sub_id}_ep={epoch}.nii.gz'
-#             fn_ref = f'{split}/{mod}_{sub_id}_ref.nii.gz'
-#             save_img(mod_pred_reg_cropped, affine, args['output_dir'], fn_pred)
-#             save_img(mod_ref_cropped, affine, args['output_dir'], fn_ref)
-
-#     return metrics
-
-
-# def reg_imgs(fix_nii, mov_nii, mask_mov_nii=None, mytx=None, reg_type='Rigid', is_seg=False):
-#     """
-#     Normalizes, masks, and registers a moving image to a fixed image.
-#     Args:
-#         fix_nii: fixed image as nib.Nifti1Image
-#         mov_nii: moving image as nib.Nifti1Image
-#         mask_mov_nii: mask of the moving image as nib.Nifti1Image
-#         mytx: transformation matrix from previous registration or None
-#         reg_type: registration type
-#         is_seg: whether the image is a segmentation (if True, use label interpolation)
-#     Returns:
-#         fix_reg: normalized fixed image as nib.Nifti1Image
-#         mov_reg: normalized moving image as nib.Nifti1Image
-#         mytx: transformation matrix from registration
-#     """
-#     fix, mov = ants.from_nibabel(fix_nii), ants.from_nibabel(mov_nii)
-#     mask_mov = ants.from_nibabel(mask_mov_nii) > 0 if mask_mov_nii is not None else None
-#     ip = 'genericLabel' if is_seg else 'linear'
-
-#     if mytx is None:
-#         mov = mov * mask_mov if mask_mov is not None else mov
-#         mytx = ants.registration(fix, mov, type_of_transform=reg_type)
-#         mov_reg = mytx['warpedmovout']
-#     else:
-#         mov_reg = ants.apply_transforms(fix, mov, mytx['fwdtransforms'], interpolator=ip)
-#     if mask_mov is not None: # apply mask to fixed image if provided
-#         mask_mov_reg = ants.apply_transforms(fix, mask_mov, mytx['fwdtransforms'], interpolator='genericLabel')
-#         fix = fix * mask_mov_reg
-#     if not is_seg: # normalize segmentation to [0, 1]
-#         mov_reg = (mov_reg-mov_reg.min())/(mov_reg.max()-mov_reg.min())
-#         fix = (fix-fix.min())/(fix.max()-fix.min())
-
-#     fix_nii = ants.to_nibabel(fix)
-#     mov_reg_nii = ants.to_nibabel(mov_reg)
-#     return fix_nii, mov_reg_nii, mytx
-
 def compute_metrics(args, pred, affine, df_row_dict, epoch, split, reg_type='Rigid', bg_label=None):
     """
     Compute metrics for a predicted subject.
@@ -563,8 +467,13 @@ def compute_metrics(args, pred, affine, df_row_dict, epoch, split, reg_type='Rig
         mod_pred_nii = nib.Nifti1Image(pred[..., i], affine)
 
         # 3. 转换为 ANTs 对象以便处理
-        fix = ants.from_nibabel(mod_ref_nii) # Fixed Image (GT)
-        mov = ants.from_nibabel(mod_pred_nii) # Moving Image (Pred)
+        # 处理 Reference (Fixed Image)
+        data_ref_np = mod_ref_nii.get_fdata().astype('float32')
+        fix = ants.from_numpy(data_ref_np, spacing=mod_ref_nii.header.get_zooms()[:3])
+        
+        # 处理 Prediction (Moving Image) - [修改] 手动转换
+        data_pred_np = mod_pred_nii.get_fdata().astype('float32')
+        mov = ants.from_numpy(data_pred_np, spacing=mod_pred_nii.header.get_zooms()[:3])
 
         # ================= [关键修复：重采样] =================
         # 即使物理坐标对齐，像素网格可能不同。必须将 Mov 重采样到 Fix 的网格上。
@@ -594,8 +503,10 @@ def compute_metrics(args, pred, affine, df_row_dict, epoch, split, reg_type='Rig
                  fix = (fix - fix_arr.min()) / (fix_arr.max() - fix_arr.min())
 
         # 5. 转回 Nibabel 用于裁剪和指标计算
-        mod_pred_reg_nii = ants.to_nibabel(mov)
-        mod_ref_nii = ants.to_nibabel(fix)
+        # [修改] 手动封装：使用 ANTs 的数据 + 原始 Reference 的 affine
+        # 因为 mov 已经被重采样到了 fix (reference) 的空间，所以它们都共享 mod_ref_nii 的 affine
+        mod_pred_reg_nii = nib.Nifti1Image(mov.numpy(), mod_ref_nii.affine)
+        mod_ref_nii = nib.Nifti1Image(fix.numpy(), mod_ref_nii.affine)
         
         # 6. 裁剪 (Crop) 以去除背景，聚焦脑部区域计算指标
         # 使用你修改过的 get_bbox (带防空检查)
@@ -645,8 +556,13 @@ def reg_imgs(fix_nii, mov_nii, mask_mov_nii=None, mytx=None, reg_type='Rigid', i
         return nib.Nifti1Image(zeros_data, fixed_nii.affine, fixed_nii.header)
 
     try:
-        fix = ants.from_nibabel(fix_nii)
-        mov = ants.from_nibabel(mov_nii)
+        # 手动转换 fix_nii
+        fix_data = fix_nii.get_fdata().astype('float32')
+        fix = ants.from_numpy(fix_data, spacing=fix_nii.header.get_zooms()[:3])
+        
+        # 手动转换 mov_nii
+        mov_data = mov_nii.get_fdata().astype('float32')
+        mov = ants.from_numpy(mov_data, spacing=mov_nii.header.get_zooms()[:3])
     except Exception as e:
         print(f"[Error] Failed to convert nifti to ants: {e}")
         return fix_nii, get_zeros_like_fixed(fix_nii), None
@@ -720,8 +636,9 @@ def reg_imgs(fix_nii, mov_nii, mask_mov_nii=None, mytx=None, reg_type='Rigid', i
             
         # 注意：不要归一化 fix (Pred)，因为 Pred 可能本来就是黑的，强行归一化会出 NaN
 
-    fix_nii_out = ants.to_nibabel(fix)
-    mov_reg_nii_out = ants.to_nibabel(mov_reg)
+    # 因为 mov_reg 是配准/重采样到 fix 的，所以坐标系以 fix_nii 为准
+    fix_nii_out = nib.Nifti1Image(fix.numpy(), fix_nii.affine)
+    mov_reg_nii_out = nib.Nifti1Image(mov_reg.numpy(), fix_nii.affine)
     
     return fix_nii_out, mov_reg_nii_out, mytx
 
